@@ -11,7 +11,8 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -23,7 +24,11 @@ jobs:
           cache: true
 
       - name: Create Android project files
-        run: flutter create --platforms=android --project-name my_farm_accounts .
+        run: |
+          flutter create --platforms=android,web --project-name my_farm_accounts .
+          sed -i 's/applicationId = "com.example.my_farm_accounts"/applicationId = "com.mohamedrizk.myfarmaccounts"/' android/app/build.gradle.kts || true
+          sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 24/' android/app/build.gradle.kts || true
+          sed -i 's/android:label="my_farm_accounts"/android:label="حسابات مزرعتي - My Farm Accounts"/' android/app/src/main/AndroidManifest.xml || true
 
       - name: Get dependencies
         run: flutter pub get
