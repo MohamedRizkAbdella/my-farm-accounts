@@ -1,5 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'dart:convert';
+import 'package:image_picker/image_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 void main() => runApp(const MyFarmAccountsApp());
 
@@ -11,12 +17,17 @@ class MyFarmAccountsApp extends StatefulWidget {
 class _AppState extends State<MyFarmAccountsApp> {
   bool ar = true;
   int page = 0;
+  List<Worker> workers=[];
+  List<StockItem> stock=[];
   final List<Tx> txs = [
     Tx(TxType.revenue, 'بيع تمر', 28500, DateTime.now()),
     Tx(TxType.expense, 'أسمدة ومستلزمات', 6200, DateTime.now()),
     Tx(TxType.expense, 'أجور عمالة', 12200, DateTime.now()),
   ];
   String t(String a, String e) => ar ? a : e;
+  @override void initState(){super.initState();_loadFarmData();}
+  Future<void> _loadFarmData() async { final p=await SharedPreferences.getInstance(); workers=(jsonDecode(p.getString('workers')??'[]') as List).map((x)=>Worker.fromJson(x)).toList(); stock=(jsonDecode(p.getString('stock')??'[]') as List).map((x)=>StockItem.fromJson(x)).toList(); setState((){}); }
+  Future<void> _saveFarmData() async { final p=await SharedPreferences.getInstance(); await p.setString('workers',jsonEncode(workers.map((x)=>x.toJson()).toList())); await p.setString('stock',jsonEncode(stock.map((x)=>x.toJson()).toList())); }
 
   @override Widget build(BuildContext context) => MaterialApp(
     debugShowCheckedModeBanner: false,
@@ -43,7 +54,7 @@ class Shell extends StatelessWidget {
   const Shell({super.key,required this.title,required this.page,required this.ar,required this.onPage,required this.onLanguage,required this.child});
   @override Widget build(BuildContext context) {
     final wide=MediaQuery.sizeOf(context).width>=900;
-    final menu=[(Icons.dashboard_rounded,ar?'لوحة التحكم':'Dashboard'),(Icons.trending_up_rounded,ar?'الإيرادات':'Revenue'),(Icons.trending_down_rounded,ar?'المصروفات':'Expenses')];
+    final menu=[(Icons.dashboard_rounded,ar?'لوحة التحكم':'Dashboard'),(Icons.trending_up_rounded,ar?'الإيرادات':'Revenue'),(Icons.trending_down_rounded,ar?'المصروفات':'Expenses'), (Icons.account_balance,ar?'رأس المال':'Capital'), (Icons.people,ar?'العمال والموظفون':'Workers & HR'), (Icons.event_available,ar?'الحضور والانصراف':'Attendance'), (Icons.inventory_2,ar?'المخازن والأصول':'Inventory'), (Icons.local_florist,ar?'الصوبة الزراعية':'Greenhouse'), (Icons.picture_as_pdf,ar?'التقارير':'Reports')];
     return Scaffold(
       appBar:AppBar(title:Text(title,style:const TextStyle(fontWeight:FontWeight.w800)),actions:[TextButton.icon(onPressed:onLanguage,icon:const Icon(Icons.translate),label:Text(ar?'EN':'عربي'))]),
       drawer:wide?null:Drawer(child:SideMenu(menu:menu,page:page,onPage:onPage,ar:ar)),
@@ -133,4 +144,74 @@ class _TransactionsPageState extends State<TransactionsPage>{
     final n=double.tryParse(amount.text);
     if(ok==true&&name.text.trim().isNotEmpty&&n!=null)widget.onAdd(Tx(widget.type,name.text.trim(),n,DateTime.now()));
   }
+}
+
+class Worker {
+  String name, phone; double salary, advance, deduction, bonus; int present, absent;
+  Worker({required this.name,required this.phone,required this.salary,this.advance=0,this.deduction=0,this.bonus=0,this.present=0,this.absent=0});
+  double get due=>salary-advance-deduction-(salary/30*absent)+bonus;
+  Map<String,dynamic> toJson()=>{'name':name,'phone':phone,'salary':salary,'advance':advance,'deduction':deduction,'bonus':bonus,'present':present,'absent':absent};
+  static Worker fromJson(Map<String,dynamic>x)=>Worker(name:x['name'],phone:x['phone'],salary:(x['salary']as num).toDouble(),advance:(x['advance']as num).toDouble(),deduction:(x['deduction']as num).toDouble(),bonus:(x['bonus']as num).toDouble(),present:x['present'],absent:x['absent']);
+}
+class StockItem {
+  String name,type; double quantity;
+  StockItem({required this.name,required this.type,required this.quantity});
+  Map<String,dynamic> toJson()=>{'name':name,'type':type,'quantity':quantity};
+  static StockItem fromJson(Map<String,dynamic>x)=>StockItem(name:x['name'],type:x['type'],quantity:(x['quantity']as num).toDouble());
+}
+class WorkersPage extends StatelessWidget {
+ final String Function(String,String)t; final List<Worker>workers; final VoidCallback onChange;
+ const WorkersPage({super.key,required this.t,required this.workers,required this.onChange});
+ @override Widget build(BuildContext c)=>ListView(padding:const EdgeInsets.all(24),children:[
+  Text(t('الموارد البشرية والعمالة','Workers & HR'),style:Theme.of(c).textTheme.headlineMedium),
+  FilledButton.icon(onPressed:()=>add(c),icon:const Icon(Icons.add),label:Text(t('إضافة عامل','Add worker'))),
+  ...workers.map((w)=>Card(child:ListTile(title:Text(w.name),subtitle:Text(w.phone+' • '+t('المستحق','Due')+' '+w.due.toStringAsFixed(2)),trailing:Text(w.salary.toStringAsFixed(2))))
+  )
+ ]);
+ Future<void>add(BuildContext c)async{
+  final n=TextEditingController(),p=TextEditingController(),s=TextEditingController();
+  final ok=await showDialog<bool>(context:c,builder:(_)=>AlertDialog(title:Text(t('عامل جديد','New worker')),content:Column(mainAxisSize:MainAxisSize.min,children:[
+   TextField(controller:n,decoration:InputDecoration(labelText:t('الاسم','Name'))),TextField(controller:p,decoration:InputDecoration(labelText:t('الهاتف','Phone'))),TextField(controller:s,keyboardType:TextInputType.number,decoration:InputDecoration(labelText:t('الراتب','Salary')))
+  ]),actions:[TextButton(onPressed:()=>Navigator.pop(c,false),child:Text(t('إلغاء','Cancel'))),FilledButton(onPressed:()=>Navigator.pop(c,true),child:Text(t('حفظ','Save')))]));
+  final v=double.tryParse(s.text); if(ok==true&&v!=null&&n.text.isNotEmpty){workers.add(Worker(name:n.text,phone:p.text,salary:v));onChange();}
+ }
+}
+class AttendancePage extends StatelessWidget {
+ final String Function(String,String)t; final List<Worker>workers; final VoidCallback onChange;
+ const AttendancePage({super.key,required this.t,required this.workers,required this.onChange});
+ @override Widget build(BuildContext c)=>ListView(padding:const EdgeInsets.all(24),children:[
+  Text(t('الحضور والانصراف','Attendance'),style:Theme.of(c).textTheme.headlineMedium),
+  ...workers.map((w)=>Card(child:ListTile(title:Text(w.name),subtitle:Text(t('حاضر','Present')+' '+w.present.toString()+' • '+t('غياب','Absent')+' '+w.absent.toString()+' • '+w.due.toStringAsFixed(2)),trailing:Wrap(children:[
+   IconButton(onPressed:(){w.present++;onChange();},icon:const Icon(Icons.check_circle)),
+   IconButton(onPressed:(){w.absent++;onChange();},icon:const Icon(Icons.cancel))
+  ]))))
+ ]);
+}
+class StockPage extends StatelessWidget {
+ final String Function(String,String)t; final List<StockItem>stock; final String type; final VoidCallback onChange;
+ const StockPage({super.key,required this.t,required this.stock,required this.type,required this.onChange});
+ @override Widget build(BuildContext c)=>ListView(padding:const EdgeInsets.all(24),children:[
+  Text(type=='inventory'?t('المخازن والأصول الزراعية','Inventory & Assets'):t('الصوبة الزراعية والشتلات','Greenhouse & Seedlings'),style:Theme.of(c).textTheme.headlineMedium),
+  FilledButton.icon(onPressed:(){stock.add(StockItem(name:type=='inventory'?t('أسمدة','Fertilizers'):t('شتلات نخيل','Palm seedlings'),type:type,quantity:1));onChange();},icon:const Icon(Icons.add),label:Text(t('إضافة','Add'))),
+  ...stock.where((x)=>x.type==type).map((x)=>Card(child:ListTile(title:Text(x.name),trailing:Text(x.quantity.toString()))))
+ ]);
+}
+class CapitalPage extends StatelessWidget {
+ final String Function(String,String)t; const CapitalPage({super.key,required this.t});
+ @override Widget build(BuildContext c)=>ListView(padding:const EdgeInsets.all(24),children:[
+  Text(t('حسابات المالك ورأس المال','Owner & Capital'),style:Theme.of(c).textTheme.headlineMedium),
+  ListTile(leading:const Icon(Icons.add_circle),title:Text(t('إيداعات رأس المال','Capital deposits'))),
+  ListTile(leading:const Icon(Icons.remove_circle),title:Text(t('سحوبات المالك','Owner withdrawals')))
+ ]);
+}
+class ReportsPage extends StatelessWidget {
+ final String Function(String,String)t; final List<Tx>txs; final List<Worker>workers;
+ const ReportsPage({super.key,required this.t,required this.txs,required this.workers});
+ @override Widget build(BuildContext c)=>ListView(padding:const EdgeInsets.all(24),children:[
+  Text(t('التقارير والتحليلات','Reports & Analytics'),style:Theme.of(c).textTheme.headlineMedium),
+  FilledButton.icon(onPressed:()=>makePdf(),icon:const Icon(Icons.picture_as_pdf),label:Text(t('إنشاء PDF وطباعة','Create PDF / Print'))),
+  OutlinedButton.icon(onPressed:()=>openWhatsApp(),icon:const Icon(Icons.chat),label:Text(t('إرسال عبر واتساب','Send via WhatsApp')))
+ ]);
+ Future<void>makePdf()async{final d=pw.Document();d.addPage(pw.Page(build:(_)=>pw.Column(children:[pw.Text('My Farm Accounts'),pw.Text('Transactions: '+txs.length.toString()),pw.Text('Workers: '+workers.length.toString())])));await Printing.layoutPdf(onLayout:(_)=>d.save());}
+ Future<void>openWhatsApp()async{final u=Uri.parse('https://wa.me/?text=My%20Farm%20Accounts');if(await canLaunchUrl(u))await launchUrl(u,mode:LaunchMode.externalApplication);}
 }
